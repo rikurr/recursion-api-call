@@ -2,7 +2,7 @@ use async_recursion::async_recursion;
 use chrono::prelude::*;
 use serde_json::{json, Error, Value};
 
-fn generate_query(cursor: &str) -> Value {
+fn generate_query(cursor: &str, created_at_min: &str, created_at_max: &str) -> Value {
     json!({
         "query": "
             query($cursor: String, $createdAtMin: DateTime, $createdAtMax: DateTime) {
@@ -35,8 +35,8 @@ fn generate_query(cursor: &str) -> Value {
             ",
         "variables": {
             "cursor": cursor,
-            "createdAtMin": "2022-11-28T00:00:00.000000Z",
-            "createdAtMax": "2022-12-01T00:00:00.000000Z"
+            "createdAtMin": created_at_min,
+            "createdAtMax": created_at_max,
         }
     })
 }
@@ -46,9 +46,10 @@ async fn send_post_request(
     url: &str,
     access_token: &str,
     cursor: &str,
+    created_at_min: &str,
+    created_at_max: &str,
 ) -> Result<Vec<Value>, Error> {
-    println!("今のデータ{}", cursor);
-    let body = generate_query(cursor);
+    let body = generate_query(cursor, created_at_min, created_at_max);
     let client = reqwest::Client::new();
     let response_json = client
         .post(url)
@@ -81,13 +82,17 @@ async fn send_post_request(
         .unwrap()
         .as_str()
         .unwrap();
-    println!("何個{}", transactions.len());
 
     if has_next_page {
-        println!("次のデータ{}", end_cursor);
-        let new_transactions = send_post_request(url, access_token, end_cursor)
-            .await
-            .unwrap();
+        let new_transactions = send_post_request(
+            url,
+            access_token,
+            end_cursor,
+            created_at_min,
+            created_at_max,
+        )
+        .await
+        .unwrap();
         let actual = [&transactions[..], &new_transactions[..]].concat();
         return Ok(actual);
     }
@@ -115,9 +120,17 @@ async fn main() -> reqwest::Result<()> {
             std::process::exit(1);
         }
     };
-    let transactions = send_post_request(&url, &access_token, "").await.unwrap();
-    let date: DateTime<Utc> = Utc.with_ymd_and_hms(2022, 12, 1, 0, 0, 0).unwrap();
-    println!("{}", date);
+    let created_at_min = Utc.with_ymd_and_hms(2022, 11, 1, 0, 0, 0).unwrap();
+    let created_at_max = Utc.with_ymd_and_hms(2022, 12, 1, 0, 0, 0).unwrap();
+    let transactions = send_post_request(
+        &url,
+        &access_token,
+        "",
+        &created_at_min.to_rfc3339(),
+        &created_at_max.to_rfc3339(),
+    )
+    .await
+    .unwrap();
 
     println!("配列の数：{}", transactions.len());
     println!("完了");

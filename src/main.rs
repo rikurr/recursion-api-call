@@ -1,6 +1,14 @@
 use async_recursion::async_recursion;
 use chrono::prelude::*;
 use serde_json::{json, Error, Value};
+use serde::Deserialize;
+
+#[derive(Deserialize, Debug)]
+struct Config {
+    access_token: String,
+    api_url: String,
+}
+
 
 fn generate_query(cursor: &str, created_at_min: &str, created_at_max: &str) -> Value {
     json!({
@@ -103,28 +111,22 @@ async fn send_post_request(
 async fn main() -> reqwest::Result<()> {
     dotenv::dotenv().ok();
 
-    let access_token_key = "ACCESS_TOKEN";
-    let api_url_key = "API_URL";
+    let config = match envy::from_env::<Config>() {
+        Ok(val) => val,
+        Err(err) => {
+            println!("{}", err);
+            std::process::exit(1);
+        }
+    };
 
-    let url = match std::env::var(api_url_key) {
-        Ok(val) => val,
-        Err(err) => {
-            println!("{}:{}", err, api_url_key);
-            std::process::exit(1);
-        }
-    };
-    let access_token = match std::env::var(access_token_key) {
-        Ok(val) => val,
-        Err(err) => {
-            println!("{}:{}", err, access_token_key);
-            std::process::exit(1);
-        }
-    };
+    //  取得するデータの日時の範囲
     let created_at_min = Utc.with_ymd_and_hms(2022, 11, 1, 0, 0, 0).unwrap();
     let created_at_max = Utc.with_ymd_and_hms(2022, 12, 1, 0, 0, 0).unwrap();
+    
+    // 日付範囲内のデータを全件取得
     let transactions = send_post_request(
-        &url,
-        &access_token,
+        &config.api_url,
+        &config.access_token,
         "",
         &created_at_min.to_rfc3339(),
         &created_at_max.to_rfc3339(),

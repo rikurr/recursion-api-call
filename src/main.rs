@@ -1,28 +1,29 @@
 use async_recursion::async_recursion;
+use chrono::prelude::*;
 use serde_json::{json, Error, Value};
 
 fn generate_query(cursor: &str) -> Value {
     json!({
         "query": "
             query($cursor: String, $createdAtMin: DateTime, $createdAtMax: DateTime) {
-                transactions(types: [APP_SUBSCRIPTION_SALE] after: $cursor, first: 5, createdAtMin: $createdAtMin, createdAtMax: $createdAtMax) {
+                transactions(types: [APP_SUBSCRIPTION_SALE] after: $cursor, first: 100, createdAtMin: $createdAtMin, createdAtMax: $createdAtMax) {
                     edges {
                         cursor
                         node {
-                            id
-                            createdAt
-                            ... on AppSubscriptionSale {
-                            netAmount {
-                                amount
+                                id
+                                createdAt
+                                ... on AppSubscriptionSale {
+                                netAmount {
+                                    amount
                             }
                             app {
-                                id
-                                name
+                                    id
+                                    name
                             }
                             shop {
-                                name
-                                myshopifyDomain
-                            }
+                                    name
+                                    myshopifyDomain
+                                }
                             }
                         }
                         }
@@ -32,9 +33,11 @@ fn generate_query(cursor: &str) -> Value {
                     }
                 }
             ",
-        "cursor": cursor,
-        "createdAtMin": "2022-11-28T00:00:00.000000Z",
-        "createdAtMax": "2022-12-01T00:00:00.000000Z"
+        "variables": {
+            "cursor": cursor,
+            "createdAtMin": "2022-11-28T00:00:00.000000Z",
+            "createdAtMax": "2022-12-01T00:00:00.000000Z"
+        }
     })
 }
 
@@ -50,7 +53,7 @@ async fn send_post_request(
     let response_json = client
         .post(url)
         .json(&body)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::CONTENT_TYPE, "application/graphql")
         .header("X-Shopify-Access-Token", access_token)
         .send()
         .await
@@ -93,6 +96,8 @@ async fn send_post_request(
 
 #[tokio::main]
 async fn main() -> reqwest::Result<()> {
+    dotenv::dotenv().ok();
+
     let access_token_key = "ACCESS_TOKEN";
     let api_url_key = "API_URL";
 
@@ -111,6 +116,8 @@ async fn main() -> reqwest::Result<()> {
         }
     };
     let transactions = send_post_request(&url, &access_token, "").await.unwrap();
+    let date: DateTime<Utc> = Utc.with_ymd_and_hms(2022, 12, 1, 0, 0, 0).unwrap();
+    println!("{}", date);
 
     println!("配列の数：{}", transactions.len());
     println!("完了");

@@ -1,7 +1,7 @@
 use async_recursion::async_recursion;
 use chrono::prelude::*;
+use serde_derive::{Deserialize, Serialize};
 use serde_json::{json, Error, Value};
-use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 struct Config {
@@ -9,6 +9,67 @@ struct Config {
     api_url: String,
 }
 
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct Query {
+    data: Data,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct Data {
+    transactions: Transactions,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct Transactions {
+    edges: Vec<Edges>,
+    page_info: PageInfo,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct Edges {
+    cursor: String,
+    node: Node,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct PageInfo {
+    has_next_page: bool,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct Node {
+    id: String,
+    created_at: String,
+    net_amount: NetAmount,
+    app: App,
+    shop: Shop,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct NetAmount {
+    amount: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct App {
+    id: String,
+    name: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct Shop {
+    name: String,
+    myshopify_domain: String,
+}
 
 fn generate_query(cursor: &str, created_at_min: &str, created_at_max: &str) -> Value {
     json!({
@@ -56,7 +117,7 @@ async fn send_post_request(
     cursor: &str,
     created_at_min: &str,
     created_at_max: &str,
-) -> Result<Vec<Value>, Error> {
+) -> Result<Vec<Edges>, Error> {
     let body = generate_query(cursor, created_at_min, created_at_max);
     let client = reqwest::Client::new();
     let response_json = client
@@ -67,29 +128,14 @@ async fn send_post_request(
         .send()
         .await
         .unwrap()
-        .json::<Value>()
+        .json::<Query>()
         .await
         .unwrap();
 
-    println!("{:?}", response_json);
-    let data = response_json
-        .get("data")
-        .unwrap()
-        .get("transactions")
-        .unwrap();
-    let has_next_page = data
-        .get("pageInfo")
-        .unwrap()
-        .get("hasNextPage")
-        .unwrap()
-        .as_bool()
-        .unwrap();
-    let transactions = data.get("edges").unwrap().as_array().unwrap().clone();
-    let end_cursor = data.get("edges").unwrap().as_array().unwrap()[transactions.len() - 1]
-        .get("cursor")
-        .unwrap()
-        .as_str()
-        .unwrap();
+    let data = response_json.data.transactions;
+    let has_next_page = data.page_info.has_next_page;
+    let transactions = data.edges.clone();
+    let end_cursor = &data.edges.last().unwrap().cursor;
 
     if has_next_page {
         let new_transactions = send_post_request(
@@ -111,6 +157,18 @@ async fn send_post_request(
 async fn main() -> reqwest::Result<()> {
     dotenv::dotenv().ok();
 
+    let year = 2022;
+    let month = 11;
+
+    let dir = String::from("output/") + &year.to_string() + "-" + &month.to_string();
+    let created_dir_date = std::fs::create_dir_all(dir);
+
+    match created_dir_date {
+        Ok(()) => println!("フォルダを作成しました。"),
+        Err(e) => println!("フォルダ作成エラー: {}", e),
+    }
+
+    // 環境変数取得
     let config = match envy::from_env::<Config>() {
         Ok(val) => val,
         Err(err) => {
@@ -120,9 +178,9 @@ async fn main() -> reqwest::Result<()> {
     };
 
     //  取得するデータの日時の範囲
-    let created_at_min = Utc.with_ymd_and_hms(2022, 11, 1, 0, 0, 0).unwrap();
-    let created_at_max = Utc.with_ymd_and_hms(2022, 12, 1, 0, 0, 0).unwrap();
-    
+    let created_at_min = Utc.with_ymd_and_hms(year, month, 1, 0, 0, 0).unwrap();
+    let created_at_max = Utc.with_ymd_and_hms(year, month + 1, 1, 0, 0, 0).unwrap();
+
     // 日付範囲内のデータを全件取得
     let transactions = send_post_request(
         &config.api_url,
@@ -133,6 +191,9 @@ async fn main() -> reqwest::Result<()> {
     )
     .await
     .unwrap();
+
+    let data_to_json = serde_json::to_string_pretty(&transactions).unwrap();
+    std::fs::write("output/hello.json", data_to_json).unwrap();
 
     println!("配列の数：{}", transactions.len());
     println!("完了");

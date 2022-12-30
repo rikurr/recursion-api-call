@@ -51,7 +51,7 @@ struct Node {
     shop: Shop,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct NetAmount {
     amount: String,
@@ -82,6 +82,8 @@ struct ResultData {
 struct Apps {
     id: String,
     app_name: String,
+    count: u32,
+    total_paid: f32,
     data: Vec<Edges>,
 }
 
@@ -242,7 +244,10 @@ async fn main() -> reqwest::Result<()> {
 
             match exists {
                 Some(app) => {
+                    let amount = current.node.net_amount.amount.clone();
                     app.data.push(current);
+                    app.count += 1;
+                    app.total_paid += amount.parse::<f32>().unwrap();
                     result
                 }
                 None => {
@@ -251,7 +256,9 @@ async fn main() -> reqwest::Result<()> {
                     let app = Apps {
                         id,
                         app_name,
+                        total_paid: current.node.net_amount.amount.parse::<f32>().unwrap(),
                         data: vec![current],
+                        count: 1,
                     };
                     result.push(app);
                     result

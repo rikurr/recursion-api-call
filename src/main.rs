@@ -1,9 +1,9 @@
 use async_recursion::async_recursion;
 use chrono::prelude::*;
-use serde_derive::{Deserialize, Serialize};
-use serde_json::{json, Error, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Error;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 struct Config {
     access_token: String,
     api_url: String,
@@ -28,7 +28,7 @@ struct Transactions {
     page_info: PageInfo,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct Edges {
     cursor: String,
@@ -41,7 +41,7 @@ struct PageInfo {
     has_next_page: bool,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct Node {
     id: String,
@@ -51,7 +51,7 @@ struct Node {
     shop: Shop,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct NetAmount {
     amount: String,
@@ -64,50 +64,81 @@ struct App {
     name: String,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all(deserialize = "camelCase"))]
 struct Shop {
     name: String,
     myshopify_domain: String,
 }
 
-fn generate_query(cursor: &str, created_at_min: &str, created_at_max: &str) -> Value {
-    json!({
-        "query": "
-            query($cursor: String, $createdAtMin: DateTime, $createdAtMax: DateTime) {
-                transactions(types: [APP_SUBSCRIPTION_SALE] after: $cursor, first: 100, createdAtMin: $createdAtMin, createdAtMax: $createdAtMax) {
-                    edges {
-                        cursor
-                        node {
-                                id
-                                createdAt
-                                ... on AppSubscriptionSale {
-                                netAmount {
-                                    amount
-                            }
-                            app {
+#[derive(Deserialize, Serialize, Debug)]
+struct ResultData {
+    count: usize,
+    total_paid: f32,
+    data: Vec<Edges>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+struct Apps {
+    id: String,
+    app_name: String,
+    data: Vec<Edges>,
+}
+
+#[derive(Serialize, Debug)]
+struct RequestBody {
+    query: String,
+    variables: Variables,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all(serialize = "camelCase"))]
+struct Variables {
+    cursor: String,
+    created_at_min: String,
+    created_at_max: String,
+}
+
+impl RequestBody {
+    fn new(cursor: &str, created_at_min: &str, created_at_max: &str) -> Self {
+        let variables = Variables {
+            cursor: cursor.to_string(),
+            created_at_min: created_at_min.to_string(),
+            created_at_max: created_at_max.to_string(),
+        };
+        RequestBody {
+            query: r#"
+                query($cursor: String, $createdAtMin: DateTime, $createdAtMax: DateTime) {
+                    transactions(types: [APP_SUBSCRIPTION_SALE] after: $cursor, first: 100, createdAtMin: $createdAtMin, createdAtMax: $createdAtMax) {
+                        edges {
+                            cursor
+                            node {
                                     id
-                                    name
-                            }
-                            shop {
-                                    name
-                                    myshopifyDomain
+                                    createdAt
+                                    ... on AppSubscriptionSale {
+                                    netAmount {
+                                        amount
+                                }
+                                app {
+                                        id
+                                        name
+                                }
+                                shop {
+                                        name
+                                        myshopifyDomain
+                                    }
                                 }
                             }
-                        }
-                        }
-                        pageInfo {
-                        hasNextPage
+                            }
+                            pageInfo {
+                            hasNextPage
+                            }
                         }
                     }
-                }
-            ",
-        "variables": {
-            "cursor": cursor,
-            "createdAtMin": created_at_min,
-            "createdAtMax": created_at_max,
+                "#.to_string(),
+            variables,
         }
-    })
+    }
 }
 
 #[async_recursion]
@@ -118,12 +149,11 @@ async fn send_post_request(
     created_at_min: &str,
     created_at_max: &str,
 ) -> Result<Vec<Edges>, Error> {
-    let body = generate_query(cursor, created_at_min, created_at_max);
+    let body = RequestBody::new(cursor, created_at_min, created_at_max);
     let client = reqwest::Client::new();
     let response_json = client
         .post(url)
         .json(&body)
-        .header(reqwest::header::CONTENT_TYPE, "application/graphql")
         .header("X-Shopify-Access-Token", access_token)
         .send()
         .await
@@ -134,8 +164,8 @@ async fn send_post_request(
 
     let data = response_json.data.transactions;
     let has_next_page = data.page_info.has_next_page;
-    let transactions = data.edges.clone();
-    let end_cursor = &data.edges.last().unwrap().cursor;
+    let mut transactions = data.edges;
+    let end_cursor = &transactions.last().unwrap().cursor;
 
     if has_next_page {
         let new_transactions = send_post_request(
@@ -147,8 +177,8 @@ async fn send_post_request(
         )
         .await
         .unwrap();
-        let actual = [&transactions[..], &new_transactions[..]].concat();
-        return Ok(actual);
+        transactions.extend(new_transactions);
+        return Ok(transactions);
     }
     Ok(transactions)
 }
@@ -161,7 +191,7 @@ async fn main() -> reqwest::Result<()> {
     let month = 11;
 
     let dir = String::from("output/") + &year.to_string() + "-" + &month.to_string();
-    let created_dir_date = std::fs::create_dir_all(dir);
+    let created_dir_date = std::fs::create_dir_all(&dir);
 
     match created_dir_date {
         Ok(()) => println!("フォルダを作成しました。"),
@@ -192,10 +222,51 @@ async fn main() -> reqwest::Result<()> {
     .await
     .unwrap();
 
-    let data_to_json = serde_json::to_string_pretty(&transactions).unwrap();
-    std::fs::write("output/hello.json", data_to_json).unwrap();
+    let total = ResultData {
+        count: transactions.len(),
+        total_paid: transactions.iter().fold(0.0, |sum, x| {
+            sum + x.node.net_amount.amount.parse::<f32>().unwrap()
+        }),
+        data: transactions,
+    };
 
-    println!("配列の数：{}", transactions.len());
+    // 合計値のファイルを出力
+    let json = serde_json::to_string_pretty(&total).unwrap();
+    std::fs::write(String::from(&dir) + "/合計.json", json).unwrap();
+
+    let apps_list = total
+        .data
+        .into_iter()
+        .fold(Vec::new(), |mut result: Vec<Apps>, current| {
+            let exists = result.iter_mut().find(|f| f.id == current.node.app.id);
+
+            match exists {
+                Some(app) => {
+                    app.data.push(current);
+                    result
+                }
+                None => {
+                    let id = current.node.app.id.clone();
+                    let app_name = current.node.app.name.clone();
+                    let app = Apps {
+                        id,
+                        app_name,
+                        data: vec![current],
+                    };
+                    result.push(app);
+                    result
+                }
+            }
+        });
+
+    // アプリごとの出力
+    apps_list.iter().for_each(|app| {
+        let json = serde_json::to_string_pretty(app).unwrap();
+        let path = format!("{}/{}.json", &dir, app.app_name);
+        println!("path:{}", &path);
+        std::fs::write(&path, json).unwrap();
+    });
+
     println!("完了");
     Ok(())
 }
